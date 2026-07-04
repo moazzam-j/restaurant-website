@@ -1,0 +1,65 @@
+@import "tailwindcss";
+
+:root {
+  --bg: #0a0807;
+  --bg-elevated: #0d0a08;
+  --bg-soft: #1a140d;
+  --mustard: #f2a93a;
+  --mustard-soft: #dfa73d;
+  --green: #6fa85a;
+  --green-soft: #8fbf7b;
+  --text: #f5f1e8;
+  --text-bright: #f8f4ec;
+  --muted: #8f857a;
+  --inactive: #c9bfb3;
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-bg-elevated: var(--bg-elevated);
+  --color-bg-soft: var(--bg-soft);
+  --color-mustard: var(--mustard);
+  --color-mustard-soft: var(--mustard-soft);
+  --color-green: var(--green);
+  --color-green-soft: var(--green-soft);
+  --color-text: var(--text);
+  --color-text-bright: var(--text-bright);
+  --color-muted: var(--muted);
+  --color-inactive: var(--inactive);
+  --font-display: var(--font-anton);
+  --font-sans: var(--font-work-sans);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: radial-gradient(1200px 700px at 50% -10%, var(--color-bg-soft) 0%, var(--color-bg) 55%);
+  background-attachment: fixed;
+  color: var(--color-text);
+  font-family: var(--font-work-sans), sans-serif;
+}
+
+::selection {
+  background: var(--color-mustard);
+  color: #100d0a;
+}
+
+.font-display {
+  font-family: var(--font-anton), sans-serif;
+}
+
+@media print {
+  body {
+    background: #fff !important;
+    color: #111 !important;
+  }
+  * {
+    color: #111 !important;
+    background: #fff !important;
+    border-color: #ccc !important;
+    box-shadow: none !important;
+  }
+}

@@ -1,0 +1,74 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Get a free hosted Postgres database in seconds: `npx create-db`
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+// status flows Pending -> Preparing -> Ready -> Delivered, with Cancelled as an
+// off-ramp available to staff at any stage. Stored as plain String (not a Prisma
+// enum) because SQLite has no native enum type — see src/lib/order-status.ts for
+// the canonical list. Postgres does support enums, so if this ever migrates,
+// this column can be promoted to a real `OrderStatus` enum at that point.
+model Order {
+  id           String      @id @default(cuid())
+  // Assigned in application code (see src/lib/order-number.ts), not a DB
+  // autoincrement column — SQLite only allows autoincrement() on the @id
+  // field, so a portable, app-generated sequence keeps this working
+  // unchanged after a future migration to Postgres.
+  orderNumber  Int         @unique
+  customerName String
+  phone        String
+  address      String?
+  notes        String?
+  deliveryMode String // "delivery" | "pickup"
+  subtotal     Int
+  deliveryFee  Int
+  total        Int
+  status       String      @default("pending") // "pending" | "preparing" | "ready" | "delivered" | "cancelled"
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+  items        OrderItem[]
+}
+
+model OrderItem {
+  id         String @id @default(cuid())
+  orderId    String
+  order      Order  @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  // Not a FK to MenuItem on purpose: this is a snapshot of the name/price at
+  // order time, so a later price change or item deletion never rewrites history.
+  menuItemId String
+  name       String
+  price      Int
+  qty        Int
+}
+
+model MenuCategory {
+  id        String     @id @default(cuid())
+  slug      String     @unique
+  label     String
+  sortOrder Int        @default(0)
+  items     MenuItem[]
+}
+
+model MenuItem {
+  id          String       @id @default(cuid())
+  categoryId  String
+  category    MenuCategory @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  name        String
+  description String?
+  price       Int
+  image       String
+  sortOrder   Int          @default(0)
+  available   Boolean      @default(true)
+  featured    Boolean      @default(false) // shown in the Home page "Most Loved" strip
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+}
