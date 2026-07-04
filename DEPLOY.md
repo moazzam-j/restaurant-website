@@ -4,16 +4,35 @@ Hostinger KVM 1 is a self-managed VPS — you get root SSH access to a Linux box
 
 This assumes Ubuntu 22.04/24.04 (Hostinger's default template for KVM plans). Run everything as root over SSH.
 
-## Where things live
+## Release-based deployment structure
 
-- **`/var/www/dcf`** (configurable as `APP_DIR`) — application *code* only. This is a git working tree; every deploy replaces its contents with the latest commit.
-- **`/var/www/dcf-data`** (configurable as `DATA_DIR`) — the SQLite database (`dev.db`), deliberately kept **outside** the app's git working tree. `.gitignore` already keeps it out of commits, but a directory-wide command like `git clean -fdx` explicitly deletes gitignored files too — physically separating the data directory makes the database immune to that entire class of accident, not just to git tracking.
-- **`$APP_DIR/backups/`** and **`$APP_DIR/.env`** stay inside the app directory (as before) — neither is ever touched by a deploy.
+Every deploy creates a brand new, fully-built release directory; the live site only switches over to it after the build succeeds. This means a bad deploy never takes the site down — the previous release just keeps running until the new one proves itself. Rolling back is a single command.
+
+```
+/var/www/
+    dcf-current -> releases/2026-07-10-093000   (symlink; this is what PM2 and Nginx actually run)
+    releases/
+        2026-07-04-120000/    (a full git checkout + node_modules + .next, from one deploy)
+        2026-07-10-093000/    (the newest — currently live)
+    shared/
+        .env                  (real secrets; symlinked into every release)
+        dev.db                (the only copy of the database, ever)
+        backups/              (symlinked into every release)
+        uploads/              (admin-uploaded menu photos; symlinked into public/uploads)
+    config.sh                 (stable settings deploy.sh/rollback.sh read on every run)
+    deploy.sh                 (stable copy — always the latest version from the repo)
+    rollback.sh                (stable copy — always the latest version from the repo)
+```
+
+**Why `shared/`, not inside a release:** a release directory is a disposable, fully-reproducible build of the code — nothing in it should be unique or irreplaceable. `.env`, the database, backups, and uploaded photos are the opposite: they must survive forever, across every future deploy, and must never be affected by cloning fresh code or pruning old releases. Keeping them in one place outside every release directory, and only ever symlinking them in, means a deploy script literally cannot delete them even by accident — there's no code path in `deploy.sh` that writes to `shared/` at all (except the safety backup, which only adds files).
+
+**Why `deploy.sh`/`rollback.sh` also live in a stable top-level location, not just inside each release:** old releases get pruned automatically (see below). If the deploy script only existed inside a release directory, pruning could eventually delete the very script you use to deploy. Instead, `setup-server.sh` installs the first stable copy at `/var/www/deploy.sh` once, and after every *successful* deploy, `deploy.sh` copies its own newest version (from the release it just shipped) back over that stable copy — so improvements committed to the repo take effect starting with the next deploy, automatically, with no manual re-copying. A failed deploy never touches the stable copies, so a broken script in a bad release can't lock you out.
 
 ## Recommended: use the scripts in `deploy/`
 
-- **`deploy/setup-server.sh`** — run once on a brand new server (safe to re-run on a partially-completed one too; every step checks current state first). Installs Node.js 20, git, Nginx, PM2, Certbot, and UFW; clones the app; points `DATABASE_URL` at the persistent data directory (migrating an existing database there automatically if one is found in the old in-project location); builds and starts it; configures Nginx (with a 20MB upload limit for menu photo uploads) + free HTTPS; opens the firewall; schedules daily backups; and verifies the site is actually reachable. Explains every step and pauses for confirmation before anything destructive (system upgrade, moving an existing database, enabling the firewall, requesting a real SSL cert).
-- **`deploy/deploy.sh`** — run for every future code update. Reads the database's real location out of `.env` (rather than assuming a path), takes a safety backup, pulls with `--ff-only` (fails loudly instead of creating a surprise merge commit), reinstalls dependencies (`npm ci` when a lockfile exists), regenerates the Prisma client, applies pending migrations, rebuilds, and restarts. Hashes the database before and after so you can see whether anything unexpected changed. **Guarantees it never touches the database, `backups/`, or `.env`** — refuses to even start if any of them look missing.
+- **`deploy/setup-server.sh`** — run once on a brand new server (safe to re-run on a partially-completed one too; every step checks current state first). Installs Node.js 20, git, Nginx, PM2, Certbot, and UFW; creates the `releases/`/`shared/` skeleton; migrates data from an older (pre-release-structure) deployment if one is found; writes the stable `config.sh`; fetches `deploy.sh`/`rollback.sh` from the repo into their stable locations; configures Nginx (with a 20MB upload limit) + free HTTPS; opens the firewall; schedules daily backups; then hands off to `deploy.sh` to ship the actual first release.
+- **`deploy/deploy.sh`** (run from the stable copy, `/var/www/deploy.sh`) — ships a new release. Clones fresh code into a new timestamped directory, symlinks `.env`/`backups/`/`public/uploads` in from `shared/`, installs dependencies, regenerates the Prisma client, applies pending migrations (and seeds the menu catalog only on a brand new database), builds — and **only if the build succeeds** — atomically switches `dcf-current` to the new release and restarts PM2. Verifies the site responds afterward. Prunes old releases, always keeping the live one plus the 5 before it, and defensively refuses to ever delete whichever release `dcf-current` currently points at. **Guarantees it never touches `shared/dev.db`, `shared/.env`, or `shared/backups`** — refuses to even start if `.env` is missing.
+- **`deploy/rollback.sh`** (run from the stable copy, `/var/www/rollback.sh`) — instantly switches `dcf-current` back to the previous release and restarts PM2 (or pass a specific release name, e.g. `./rollback.sh 2026-07-04-120000`, to target one explicitly). Contains no reference to the database, `.env`, or backups at all — it's structurally incapable of touching shared data. **Known limitation:** it reverts code only, not the database — if the release you're rolling back from already applied a schema migration, that migration isn't undone. Safe for additive migrations; check what migrated before relying on it otherwise.
 
 ### First-time setup
 
@@ -22,7 +41,7 @@ This assumes Ubuntu 22.04/24.04 (Hostinger's default template for KVM plans). Ru
 
 # On the VPS, over SSH as root:
 curl -fsSL https://raw.githubusercontent.com/<you>/<your-repo>/main/deploy/setup-server.sh -o setup-server.sh
-nano setup-server.sh   # edit DOMAIN, REPO_URL, APP_DIR, DATA_DIR, EMAIL_FOR_SSL at the top
+nano setup-server.sh   # edit DOMAIN, REPO_URL, EMAIL_FOR_SSL at the top
 chmod +x setup-server.sh
 ./setup-server.sh
 ```
@@ -32,17 +51,29 @@ chmod +x setup-server.sh
 ### Every future deploy
 
 ```bash
-cd /var/www/dcf
-./deploy/deploy.sh
+/var/www/deploy.sh
 ```
 
-That's it — it backs up the database first, pulls, builds, and restarts, then confirms the site is still responding.
+That's it — from anywhere, since it's not tied to a particular release's working directory. It creates a new release, builds it, switches over only on success, and confirms the site is responding.
+
+### Rolling back
+
+```bash
+/var/www/rollback.sh
+```
+
+Reverts to whichever release was live immediately before the current one, after confirming. To go back further, list what's on disk and target one explicitly:
+
+```bash
+ls /var/www/releases
+/var/www/rollback.sh 2026-07-04-120000
+```
 
 ---
 
 ## Doing it by hand instead
 
-If you'd rather run each command yourself (or a script fails partway and you want to finish manually), here's the same process step by step.
+If you'd rather understand or perform each piece yourself (or a script fails partway and you want to finish manually):
 
 ### 1. Point your domain at the VPS
 
@@ -69,56 +100,64 @@ npm install -g pm2
 - **pm2** — keeps `npm start` running in the background and restarts it if it crashes or the server reboots
 - **certbot** — issues and renews free Let's Encrypt SSL certificates
 
-### 4. Get the code onto the server
-
-This project isn't a git repository yet — push it to a private GitHub/GitLab repo from your own machine first, then clone it here. (Or `scp`/`rsync` the folder up instead, excluding `node_modules` and `.next`.)
+### 4. Create the release/shared skeleton
 
 ```bash
-cd /var/www
-git clone <your-repo-url> dcf
-cd dcf
+mkdir -p /var/www/releases /var/www/shared/backups /var/www/shared/uploads
+chmod 700 /var/www/shared   # contains .env + the database + uploaded photos
+cat > /var/www/shared/.env <<'EOF'
+DATABASE_URL="file:/var/www/shared/dev.db"
+ADMIN_PASSWORD="change-me-to-something-strong"
+EOF
+nano /var/www/shared/.env   # set the real ADMIN_PASSWORD now
 ```
 
-### 5. Install dependencies, generate the Prisma client, and configure the environment
+**Migrating an existing database from an older (pre-release-structure) deployment?** Move it, and any sidecar files, into `shared/` instead of letting a fresh one get created:
 
 ```bash
-# Prefer npm ci when a lockfile exists — reproducible, fails loudly on drift
-# instead of silently updating the lockfile like npm install would.
+mv /var/www/dcf/dev.db* /var/www/shared/ 2>/dev/null || true
+mv /var/www/dcf/.env /var/www/shared/.env   # only if you haven't created a fresh one above
+mv /var/www/dcf/backups/* /var/www/shared/backups/ 2>/dev/null || true
+mv /var/www/dcf/public/uploads/* /var/www/shared/uploads/ 2>/dev/null || true
+```
+
+### 5. Clone the first release
+
+```bash
+RELEASE=/var/www/releases/$(date +%Y-%m-%d-%H%M%S)
+git clone <your-repo-url> "$RELEASE"
+cd "$RELEASE"
+
+ln -sfn /var/www/shared/.env "$RELEASE/.env"
+ln -sfn /var/www/shared/backups "$RELEASE/backups"
+rm -rf "$RELEASE/public/uploads"
+ln -sfn /var/www/shared/uploads "$RELEASE/public/uploads"
+
 npm ci   # or: npm install, if there's no package-lock.json
-
-# Belt-and-suspenders: package.json's postinstall hook already runs this,
-# but running it explicitly doesn't depend on that hook still being there.
-npx prisma generate
-
-cp .env.example .env
-mkdir -p /var/www/dcf-data
-chmod 700 /var/www/dcf-data   # contains customer names/phones/addresses
-nano .env     # set DATABASE_URL="file:/var/www/dcf-data/dev.db" and a strong ADMIN_PASSWORD
+npx prisma generate   # belt-and-suspenders alongside the postinstall hook
 ```
 
-**Migrating an existing database from an older deployment?** If `dev.db` already exists inside the app directory from a previous setup, move it (and any sidecar files) into the new location instead of letting a fresh one get created:
-
-```bash
-mv dev.db dev.db-journal dev.db-wal dev.db-shm /var/www/dcf-data/ 2>/dev/null || true
-```
-
-(The `2>/dev/null || true` just ignores "file not found" for whichever sidecar files don't happen to exist — SQLite doesn't always have all of them.)
-
-### 6. Set up the database (first time only — skip entirely if the database file already exists)
+### 6. Set up the database (first time only — skip if `shared/dev.db` already exists)
 
 ```bash
 npx prisma migrate deploy   # production-safe — NOT `migrate dev`, and never touches existing data
 npm run seed                 # populates the menu catalog (skips automatically if data already exists)
 ```
 
-### 7. Build and start with PM2
+### 7. Build, switch the symlink, and start with PM2
 
 ```bash
-npm run build
-pm2 start npm --name dcf -- start
+npm run build   # only proceed past this if it succeeds
+
+ln -sfn "$RELEASE" /var/www/dcf-current-tmp
+mv -T /var/www/dcf-current-tmp /var/www/dcf-current   # atomic swap — avoids a broken-symlink instant
+
+pm2 start npm --name dcf --cwd /var/www/dcf-current -- start
 pm2 save
 pm2 startup    # prints a command — copy/paste and run it so PM2 survives reboots
 ```
+
+Using `--cwd /var/www/dcf-current` (the symlink) rather than the release path directly is what lets `pm2 restart dcf` pick up a new release automatically after a future symlink swap, with no PM2 reconfiguration needed.
 
 ### 8. Put Nginx in front (reverse proxy)
 
@@ -167,12 +206,12 @@ crontab -e
 Add:
 
 ```
-0 3 * * * cd /var/www/dcf && npm run backup >> backup.log 2>&1
+0 3 * * * cd /var/www/dcf-current && npm run backup >> /var/www/shared/backup.log 2>&1
 ```
 
-(`npm run backup` reads `DATABASE_URL` from `.env`, so it automatically backs up from `/var/www/dcf-data/dev.db` once that's configured — no separate change needed for the new location.)
+(`npm run backup` reads `DATABASE_URL` from `.env`, which is symlinked in from `shared/` — no path changes needed as releases come and go, since the cron job always runs from whatever `dcf-current` currently points at.)
 
-For real redundancy, also periodically copy `/var/www/dcf/backups/` off the server (e.g. `rsync` to your own machine, or to S3/Backblaze) — a backup on the same disk as the original doesn't survive a disk failure.
+For real redundancy, also periodically copy `/var/www/shared/backups/` off the server (e.g. `rsync` to your own machine, or to S3/Backblaze) — a backup on the same disk as the original doesn't survive a disk failure.
 
 ### 11. Firewall — only expose what's needed
 
@@ -192,13 +231,28 @@ curl -I https://yourdomain.com/         # should return HTTP 200 through Nginx +
 ### Future manual deploys
 
 ```bash
-cd /var/www/dcf
-npm run backup              # safety snapshot first
-git pull --ff-only          # fails loudly instead of creating a surprise merge commit
-npm ci                      # or npm install if there's no lockfile
+RELEASE=/var/www/releases/$(date +%Y-%m-%d-%H%M%S)
+git clone <your-repo-url> "$RELEASE"
+cd "$RELEASE"
+ln -sfn /var/www/shared/.env "$RELEASE/.env"
+ln -sfn /var/www/shared/backups "$RELEASE/backups"
+rm -rf "$RELEASE/public/uploads" && ln -sfn /var/www/shared/uploads "$RELEASE/public/uploads"
+npm ci
 npx prisma generate
 npx prisma migrate deploy
-npm run build
+npm run build   # only continue past here if it succeeds
+ln -sfn "$RELEASE" /var/www/dcf-current-tmp && mv -T /var/www/dcf-current-tmp /var/www/dcf-current
+pm2 restart dcf
+# then remove any releases older than the 5 you want to keep, e.g.:
+# ls -1d /var/www/releases/*/ | sort -r | tail -n +7 | xargs -r rm -rf
+```
+
+### Rolling back manually
+
+```bash
+ls /var/www/releases                          # find the release name you want
+ln -sfn /var/www/releases/<name> /var/www/dcf-current-tmp
+mv -T /var/www/dcf-current-tmp /var/www/dcf-current
 pm2 restart dcf
 ```
 
@@ -206,9 +260,10 @@ pm2 restart dcf
 
 ## Checklist before going live
 
-- [ ] `ADMIN_PASSWORD` in `.env` is a real, strong password (not the dev placeholder)
-- [ ] `DATABASE_URL` in `.env` points at `/var/www/dcf-data/dev.db` (or wherever you set `DATA_DIR`), not somewhere inside the app directory
+- [ ] `ADMIN_PASSWORD` in `/var/www/shared/.env` is a real, strong password (not the dev placeholder)
+- [ ] `DATABASE_URL` in `/var/www/shared/.env` points at `/var/www/shared/dev.db`
 - [ ] `node -e "console.log(new Intl.DateTimeFormat('en-US',{timeZone:'Asia/Karachi'}).format())"` prints a date without erroring (confirms ICU data is present — should be fine on a standard Ubuntu Node install)
 - [ ] Placed a real test order end-to-end and confirmed it shows up in `/admin`
-- [ ] Confirmed `/admin/menu` photo uploads work, including a file a few MB in size (Nginx's `client_max_body_size` and the app's own 5MB limit both need to allow it)
+- [ ] Confirmed `/admin/menu` photo uploads work, including a file a few MB in size, and that the photo survives a subsequent `/var/www/deploy.sh` run (proves the `shared/uploads` symlink is working)
 - [ ] Cron backup job is in place and you've manually run `npm run backup` once to confirm it works
+- [ ] Ran `/var/www/rollback.sh` once against a harmless test release to confirm it works before you actually need it in an emergency

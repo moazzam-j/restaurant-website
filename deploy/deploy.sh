@@ -1,26 +1,43 @@
 #!/usr/bin/env bash
 #
-# DCF — deploy an update to an already-set-up VPS.
+# DCF — ship a new release (release/symlink deployment structure).
 #
-# Run this from inside the app directory (or set APP_DIR below) whenever
-# there's new code to ship. Use setup-server.sh instead for a brand new
-# server — this script assumes PM2, Nginx, the database, and .env already exist.
+# Run as: /var/www/deploy.sh   (the STABLE copy — see below for why)
 #
-# Guarantee: this script only ever reads/pulls application CODE. It never
-# runs any command that creates, deletes, resets, or overwrites the database,
-# the backups/ folder, or .env — those are the customer/business data and
-# must survive forever across deployments. The database now lives in a
-# persistent directory OUTSIDE this app's git working tree (configured via
-# DATABASE_URL in .env, set up by setup-server.sh) specifically so that even
-# a destructive git operation in this directory (e.g. `git clean -fdx`)
-# can't reach it. The guard step below reads that path from .env itself,
-# rather than assuming a location, and aborts if anything looks wrong.
+# Each run clones a fresh copy of the repo into its own timestamped directory
+# under /var/www/releases/, builds it there, and — only if that build and a
+# reachability check both succeed — atomically swaps the /var/www/dcf-current
+# symlink to point at it and restarts PM2. If anything fails partway, the
+# live site keeps running unaffected on the previous release; the broken
+# release directory is simply left on disk for you to inspect (it is not
+# pruned automatically, since old releases are only pruned by number, not by
+# a fail flag — nothing here deletes it either).
+#
+# Guarantee: this script never creates, deletes, resets, or overwrites
+# /var/www/shared/dev.db, /var/www/shared/.env, or /var/www/shared/backups —
+# those live in one place, outside every release directory, and are only ever
+# read from or symlinked into a release, never written to by this script.
+#
+# Why this script must be run from the STABLE copy (/var/www/deploy.sh), not
+# from inside a release directory: old releases get pruned (see the last
+# step below); if this script lived only inside a release, pruning could one
+# day delete the very script you're using to deploy. setup-server.sh installs
+# the first stable copy, and this script re-installs the stable copy from
+# itself at the end of every successful run — so whatever's newest in the
+# repo takes effect starting with the next deploy, automatically.
 
 set -euo pipefail
 
-APP_DIR="/var/www/dcf"
-APP_NAME="dcf"
-REQUIRED_NODE="20.9.0"
+CONFIG_FILE="/var/www/config.sh"
+if [ ! -f "$CONFIG_FILE" ]; then
+  echo "ERROR: $CONFIG_FILE not found. Run setup-server.sh first — it creates" >&2
+  echo "this config as part of the one-time server setup." >&2
+  exit 1
+fi
+# shellcheck source=/dev/null
+source "$CONFIG_FILE"
+# Provides: REPO_URL, BASE_DIR, APP_NAME, CURRENT_LINK, RELEASES_DIR,
+#           SHARED_DIR, KEEP_RELEASES, REQUIRED_NODE
 
 confirm() {
   echo
@@ -38,15 +55,24 @@ step() {
   echo "================================================================"
 }
 
-read_env_var() {
-  local key="$1" file="$2"
-  grep -E "^${key}=" "$file" 2>/dev/null | tail -1 | sed -E "s/^${key}=//; s/^\"//; s/\"\$//"
+# Atomically point $1 (a symlink path) at $2 (a target directory).
+# Uses a temp symlink + `mv -T` (rename syscall) rather than `ln -sfn`
+# directly on the final path — `ln -sfn` briefly unlinks the old symlink
+# before creating the new one, so a request arriving in that instant could
+# see a broken link. `mv -T` replaces the directory entry in one atomic step.
+atomic_symlink() {
+  local linkname="$1" target="$2"
+  local tmp
+  tmp="$(mktemp -u "${linkname}.tmp.XXXXXX")"
+  ln -sfn "$target" "$tmp"
+  mv -T "$tmp" "$linkname"
 }
 
-cd "$APP_DIR"
+RELEASE_NAME="$(date +%Y-%m-%d-%H%M%S)"
+RELEASE_DIR="$RELEASES_DIR/$RELEASE_NAME"
 
 # ------------------------------------------------------------------
-step "1/7 — Guard: confirm Node version and protected files before touching anything"
+step "1/9 — Guard: confirm Node version and shared data before touching anything"
 # ------------------------------------------------------------------
 if ! node -e "
   const [reqMaj, reqMin, reqPat] = '$REQUIRED_NODE'.split('.').map(Number);
@@ -60,61 +86,68 @@ if ! node -e "
   exit 1
 fi
 
-if [ ! -f ".env" ]; then
-  echo "ERROR: expected '.env' to already exist in $APP_DIR, but it's missing." >&2
+if [ ! -f "$SHARED_DIR/.env" ]; then
+  echo "ERROR: expected '$SHARED_DIR/.env' to already exist, but it's missing." >&2
   echo "Refusing to continue — this script never creates it from scratch." >&2
   exit 1
 fi
 
-# The database's real location is whatever DATABASE_URL in .env says — read it
-# dynamically rather than hardcoding a path here, so this script can't drift
-# out of sync with however setup-server.sh actually configured this server.
-DB_URL_VALUE="$(read_env_var DATABASE_URL .env)"
-DB_PATH="${DB_URL_VALUE#file:}"
-if [ -z "$DB_PATH" ]; then
-  echo "ERROR: couldn't find a DATABASE_URL in .env — refusing to continue." >&2
-  exit 1
+BOOTSTRAP=0
+if [ ! -f "$SHARED_DIR/dev.db" ]; then
+  echo "NOTE: no database yet at $SHARED_DIR/dev.db — this looks like the very"
+  echo "first release on this server. Migrations will create it, and the"
+  echo "menu catalog will be seeded, once the new release is confirmed built."
+  BOOTSTRAP=1
+else
+  DB_HASH_BEFORE=$(sha256sum "$SHARED_DIR/dev.db" | cut -d' ' -f1)
+  echo "Database present at $SHARED_DIR/dev.db (sha256: ${DB_HASH_BEFORE:0:12}...)."
 fi
-if [ ! -f "$DB_PATH" ]; then
-  echo "ERROR: expected the database at '$DB_PATH' (from .env) to already exist," >&2
-  echo "but it's missing. Refusing to continue — this script never creates it." >&2
-  exit 1
-fi
-
-if [ ! -d backups ]; then
-  echo "NOTE: backups/ doesn't exist yet — it will be created the first time" \
-       "'npm run backup' runs (below), that's expected on a brand new server."
-fi
-DB_HASH_BEFORE=$(sha256sum "$DB_PATH" | cut -d' ' -f1)
-echo "Database present at $DB_PATH (sha256: ${DB_HASH_BEFORE:0:12}...), .env present."
 echo "Node $(node -v) satisfies >= v$REQUIRED_NODE. Continuing."
 
 echo
-echo "This will pull the latest code, rebuild, and restart the live app with"
-echo "'pm2 restart' — that's a few seconds of downtime for anyone using the"
-echo "site right now (existing orders/data are unaffected either way)."
-confirm "Proceed with deploying the latest code now?"
+echo "This will create a new release at:"
+echo "  $RELEASE_DIR"
+echo "and, only if it builds and responds successfully, switch the live site"
+echo "over to it (a few seconds of downtime during the PM2 restart; existing"
+echo "orders/data are unaffected either way). The current release stays live"
+echo "and untouched until that point — if anything below fails, nothing"
+echo "changes for visitors."
+confirm "Proceed with creating and shipping this new release?"
 
 # ------------------------------------------------------------------
-step "2/7 — Safety backup before deploying"
+step "2/9 — Safety backup before deploying"
 # ------------------------------------------------------------------
-echo "Taking a fresh backup (in addition to the daily cron backup) before"
-echo "touching anything, in case this deploy goes wrong for any reason."
-npm run backup
+if [ "$BOOTSTRAP" = "1" ]; then
+  echo "Skipping — no database exists yet to back up."
+else
+  echo "Taking a fresh backup (in addition to the daily cron backup) before"
+  echo "touching anything, in case this deploy goes wrong for any reason."
+  ( cd "$CURRENT_LINK" && npm run backup )
+fi
 
 # ------------------------------------------------------------------
-step "3/7 — Pull the latest code"
+step "3/9 — Clone the latest code into a new release directory"
 # ------------------------------------------------------------------
-echo "Running: git pull --ff-only"
-echo "(--ff-only refuses to create a merge commit if this checkout has diverged"
-echo "from the remote — fail loudly here rather than silently merge in prod.)"
-echo "(The database, backups/, and .env are all outside this git working tree"
-echo "or gitignored, so 'git pull' cannot see or touch them either way.)"
-git pull --ff-only
+mkdir -p "$RELEASES_DIR"
+git clone --depth 50 "$REPO_URL" "$RELEASE_DIR"
+echo "Cloned into $RELEASE_DIR"
 
 # ------------------------------------------------------------------
-step "4/7 — Install dependencies and generate the Prisma client"
+step "4/9 — Link shared data into the new release"
 # ------------------------------------------------------------------
+# .env, the database's backups, and admin-uploaded menu photos all live only
+# in $SHARED_DIR, forever, across every release — a release directory itself
+# holds nothing but code, so pruning old releases can never touch real data.
+ln -sfn "$SHARED_DIR/.env" "$RELEASE_DIR/.env"
+ln -sfn "$SHARED_DIR/backups" "$RELEASE_DIR/backups"
+rm -rf "$RELEASE_DIR/public/uploads"
+ln -sfn "$SHARED_DIR/uploads" "$RELEASE_DIR/public/uploads"
+echo "Linked .env, backups/, and public/uploads from $SHARED_DIR."
+
+# ------------------------------------------------------------------
+step "5/9 — Install dependencies and generate the Prisma client"
+# ------------------------------------------------------------------
+cd "$RELEASE_DIR"
 if [ -f package-lock.json ]; then
   echo "package-lock.json found — using 'npm ci' for a clean, reproducible,"
   echo "lockfile-exact install (fails loudly if package.json and the lockfile"
@@ -132,37 +165,102 @@ echo "client always matches the current schema regardless of that hook."
 npx prisma generate
 
 # ------------------------------------------------------------------
-step "5/7 — Apply any new database migrations"
+step "6/9 — Apply database migrations (and seed only on a brand new database)"
 # ------------------------------------------------------------------
 echo "Running: npx prisma migrate deploy"
 echo "This only APPLIES pending migrations (adds/alters tables/columns)."
 echo "It never drops the database or deletes existing rows. (This script"
-echo "deliberately never calls 'prisma migrate reset' or 'npm run seed' —"
-echo "reseeding would be pointless here and reset would destroy your data.)"
+echo "deliberately never calls 'prisma migrate reset' — that would destroy data.)"
 npx prisma migrate deploy
 
+if [ "$BOOTSTRAP" = "1" ]; then
+  echo "Seeding the menu catalog (brand new database only — 'npm run seed'"
+  echo "skips automatically if data already exists, so this is safe even if"
+  echo "detection above was wrong)."
+  npm run seed
+fi
+
 # ------------------------------------------------------------------
-step "6/7 — Build and restart"
+step "7/9 — Build"
 # ------------------------------------------------------------------
 npm run build
-pm2 restart "$APP_NAME"
+echo "Build succeeded."
 
 # ------------------------------------------------------------------
-step "7/7 — Verify nothing touched the database, and the app is up"
+step "8/9 — Switch traffic to the new release and restart PM2"
 # ------------------------------------------------------------------
-DB_HASH_AFTER=$(sha256sum "$DB_PATH" | cut -d' ' -f1)
-if [ "$DB_HASH_BEFORE" != "$DB_HASH_AFTER" ]; then
-  echo "Database changed during deploy — this is EXPECTED if new orders came in"
-  echo "while this script ran, or if step 5 applied a schema migration."
-  echo "It was NOT deleted or replaced (still present at $DB_PATH, still growing)."
+echo "Only now, after a successful build, does the live site change over."
+atomic_symlink "$CURRENT_LINK" "$RELEASE_DIR"
+echo "$CURRENT_LINK now points at $RELEASE_DIR."
+
+if pm2 describe "$APP_NAME" > /dev/null 2>&1; then
+  pm2 restart "$APP_NAME"
 else
-  echo "Database is byte-for-byte unchanged since before this deploy."
+  echo "No existing PM2 process named '$APP_NAME' — starting one now, pointed"
+  echo "at the symlink (not the release directory itself), so future restarts"
+  echo "keep working after the symlink is swapped again by the next deploy."
+  pm2 start npm --name "$APP_NAME" --cwd "$CURRENT_LINK" -- start
+  pm2 save
 fi
 
+# ------------------------------------------------------------------
+step "9/9 — Verify, self-update stable tooling, and prune old releases"
+# ------------------------------------------------------------------
 sleep 2
 if curl -fsS -o /dev/null -w "App responded with HTTP %{http_code}\n" http://localhost:3000/; then
-  echo "Deploy finished successfully."
+  echo "Deploy finished successfully — $RELEASE_NAME is now live."
 else
-  echo "WARNING: app did not respond after restart — check 'pm2 logs $APP_NAME'." >&2
+  echo "WARNING: app did not respond after switching to the new release." >&2
+  echo "The symlink has already been switched. To go back immediately, run:" >&2
+  echo "  $BASE_DIR/rollback.sh" >&2
+  echo "Then check 'pm2 logs $APP_NAME' to diagnose $RELEASE_DIR." >&2
   exit 1
 fi
+
+if [ -n "${DB_HASH_BEFORE:-}" ]; then
+  DB_HASH_AFTER=$(sha256sum "$SHARED_DIR/dev.db" | cut -d' ' -f1)
+  if [ "$DB_HASH_BEFORE" != "$DB_HASH_AFTER" ]; then
+    echo "Database changed during deploy — EXPECTED if new orders came in while"
+    echo "this ran, or if a schema migration was applied in step 6. It was NOT"
+    echo "deleted or replaced (still present at $SHARED_DIR/dev.db)."
+  else
+    echo "Database is byte-for-byte unchanged since before this deploy."
+  fi
+fi
+
+# Only after everything above has succeeded: refresh the stable deploy.sh and
+# rollback.sh from this release's copies, so improvements committed to the
+# repo take effect starting with the next run. A failed deploy (anything
+# above this line) never updates these, so a broken script can't lock you out.
+cp "$RELEASE_DIR/deploy/deploy.sh" "$BASE_DIR/deploy.sh"
+cp "$RELEASE_DIR/deploy/rollback.sh" "$BASE_DIR/rollback.sh"
+chmod +x "$BASE_DIR/deploy.sh" "$BASE_DIR/rollback.sh"
+echo "Refreshed $BASE_DIR/deploy.sh and $BASE_DIR/rollback.sh from this release."
+
+echo
+echo "Pruning old releases, keeping the current release plus the $KEEP_RELEASES"
+echo "before it (never deletes whatever $CURRENT_LINK actually points at, or"
+echo "$SHARED_DIR, regardless of sort order)."
+LIVE_RELEASE="$(readlink -f "$CURRENT_LINK")"
+# Sort descending — the YYYY-MM-DD-HHMMSS naming means lexicographic order is
+# chronological order — then keep the first (KEEP_RELEASES + 1), which is the
+# live release plus KEEP_RELEASES prior ones.
+mapfile -t ALL_RELEASES < <(find "$RELEASES_DIR" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | sort -r)
+KEEP_COUNT=$((KEEP_RELEASES + 1))
+KEPT=0
+for name in "${ALL_RELEASES[@]}"; do
+  dir="$RELEASES_DIR/$name"
+  if [ "$dir" = "$LIVE_RELEASE" ]; then
+    KEPT=$((KEPT + 1))
+    continue
+  fi
+  if [ "$KEPT" -lt "$KEEP_COUNT" ]; then
+    KEPT=$((KEPT + 1))
+  else
+    echo "Removing old release: $dir"
+    rm -rf "$dir"
+  fi
+done
+
+echo
+echo "Done. Live release: $LIVE_RELEASE"
