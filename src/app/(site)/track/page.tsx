@@ -185,13 +185,13 @@ function TrackForm() {
       </p>
 
       <form onSubmit={handleSubmit} className="mb-8 flex flex-col gap-3">
-        <div className="flex flex-wrap gap-3">
+        <div className="flex flex-col gap-3 sm:flex-row">
           <input
             value={input}
             onChange={(e) => setInput(e.target.value)}
             placeholder="Order number (optional)"
             inputMode="numeric"
-            className="min-w-[160px] flex-1 rounded-[10px] border border-white/9 bg-white/3 px-4 py-3.5 text-sm text-text placeholder:text-muted focus:border-mustard/50 focus:outline-none"
+            className="flex-1 rounded-[10px] border border-white/9 bg-white/3 px-4 py-3.5 text-sm text-text placeholder:text-muted focus:border-mustard/50 focus:outline-none"
           />
           <input
             value={phone}
@@ -199,7 +199,7 @@ function TrackForm() {
             placeholder="Phone number (11 digits)"
             inputMode="numeric"
             type="tel"
-            className="min-w-[160px] flex-1 rounded-[10px] border border-white/9 bg-white/3 px-4 py-3.5 text-sm text-text placeholder:text-muted focus:border-mustard/50 focus:outline-none"
+            className="flex-1 rounded-[10px] border border-white/9 bg-white/3 px-4 py-3.5 text-sm text-text placeholder:text-muted focus:border-mustard/50 focus:outline-none"
           />
         </div>
         <button

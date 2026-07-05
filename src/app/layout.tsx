@@ -1,7 +1,6 @@
 import type { Metadata } from "next";
 import { Anton, Work_Sans } from "next/font/google";
 import "./globals.css";
-import { CartProvider } from "@/lib/cart-context";
 
 const anton = Anton({
   variable: "--font-anton",
@@ -28,9 +27,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" className={`${anton.variable} ${workSans.variable}`}>
-      <body className="min-h-screen">
-        <CartProvider>{children}</CartProvider>
-      </body>
+      <body className="flex min-h-screen flex-col">{children}</body>
     </html>
   );
 }

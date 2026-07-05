@@ -4,6 +4,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useCart } from "@/lib/cart-context";
+import { useEffect, useRef } from "react";
 
 const links = [
   { href: "/", label: "Home" },
@@ -15,9 +16,31 @@ const links = [
 export default function Nav() {
   const pathname = usePathname();
   const { count } = useCart();
+  const navRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const el = navRef.current;
+    if (!el) return;
+    // Publishes the nav's real (responsive) height as a CSS variable, so any
+    // sticky element that needs to sit flush below it (e.g. the menu page's
+    // category tabs) can reference the true value instead of a guessed pixel
+    // number — a hardcoded offset drifts at different breakpoints and leaves
+    // a gap that scrolled content peeks through.
+    const observer = new ResizeObserver(() => {
+      // Use the full border-box height (offsetHeight), not contentRect —
+      // contentRect excludes padding/border, which would understate the
+      // nav's real rendered height and reopen the exact gap this fixes.
+      document.documentElement.style.setProperty("--nav-height", `${el.offsetHeight}px`);
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
 
   return (
-    <div className="sticky top-0 z-50 flex flex-wrap items-center justify-between gap-5 border-b border-mustard/10 bg-bg/85 px-5 py-4 backdrop-blur-lg sm:px-8 lg:px-14">
+    <div
+      ref={navRef}
+      className="sticky top-0 z-50 flex flex-wrap items-center justify-between gap-5 border-b border-mustard/10 bg-bg px-5 py-4 sm:px-8 lg:px-14"
+    >
       <Link href="/" className="flex items-center gap-3">
         <Image
           src="/images/dcf-logo.png"

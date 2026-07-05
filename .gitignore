@@ -53,5 +53,9 @@ next-env.d.ts
 /backups/
 /backup.log
 
+# admin-uploaded menu photos — persistent, shared data on the server
+# (see deploy/deploy.sh), not something a fresh git clone should ever provide
+/public/uploads/
+
 # local AI coding tool state (not part of the app)
 /.claude/

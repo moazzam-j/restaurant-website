@@ -87,16 +87,6 @@ export default function AdminOrdersPage() {
     setUpdatingId(null);
   }
 
-  async function deleteOrder(id: string, orderNumber: number) {
-    if (!window.confirm(`Delete order #${orderNumber}? This can't be undone.`)) return;
-    setUpdatingId(id);
-    const res = await fetch(`/api/orders/${id}`, { method: "DELETE" });
-    if (res.ok) {
-      setOrders((os) => os.filter((o) => o.id !== id));
-    }
-    setUpdatingId(null);
-  }
-
   const totalToday = useMemo(
     () => orders.reduce((sum, o) => (o.status === "cancelled" ? sum : sum + o.total), 0),
     [orders]
@@ -179,20 +169,11 @@ export default function AdminOrdersPage() {
                 {o.notes && <div className="mt-0.5 text-xs italic text-muted">“{o.notes}”</div>}
               </div>
 
-              <div className="flex items-center gap-2">
-                <StatusSelect
-                  value={o.status}
-                  disabled={updatingId === o.id}
-                  onChange={(newStatus) => updateStatus(o.id, newStatus)}
-                />
-                <button
-                  onClick={() => deleteOrder(o.id, o.orderNumber)}
-                  disabled={updatingId === o.id}
-                  className="print:hidden rounded-lg border border-red-500/25 px-3 py-2 text-xs font-semibold text-red-400 transition-colors hover:bg-red-500/10 disabled:opacity-50"
-                >
-                  Delete
-                </button>
-              </div>
+              <StatusSelect
+                value={o.status}
+                disabled={updatingId === o.id}
+                onChange={(newStatus) => updateStatus(o.id, newStatus)}
+              />
               <span className="hidden print:inline text-xs font-bold text-text">
                 {statusLabel(o.status)}
               </span>

@@ -12,6 +12,7 @@
   --text-bright: #f8f4ec;
   --muted: #8f857a;
   --inactive: #c9bfb3;
+  --nav-height: 85px;
 }
 
 @theme inline {
@@ -32,6 +33,10 @@
 
 * {
   box-sizing: border-box;
+}
+
+html {
+  background: var(--color-bg);
 }
 
 body {

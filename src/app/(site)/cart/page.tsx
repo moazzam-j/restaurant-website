@@ -239,13 +239,17 @@ export default function CartPage() {
               <input
                 value={address}
                 onChange={(e) => setAddress(e.target.value)}
-                placeholder="Delivery address (include Bahria Town)"
+                placeholder="Delivery address"
                 className="rounded-[10px] border border-white/9 bg-white/3 px-4 py-3.5 text-sm text-text placeholder:text-muted focus:border-mustard/50 focus:outline-none"
               />
-              {address.trim() !== "" && !isAddressValid && (
+              {address.trim() !== "" && !isAddressValid ? (
                 <div className="-mt-1.5 text-xs text-red-400">
                   We only deliver within {DELIVERY_AREA_LABEL}. Please mention &quot;Bahria
                   Town&quot; in your address, or switch to Pickup.
+                </div>
+              ) : (
+                <div className="-mt-1.5 text-xs text-muted">
+                  Please mention &quot;Bahria Town&quot; in your address.
                 </div>
               )}
             </>

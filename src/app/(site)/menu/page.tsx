@@ -27,7 +27,7 @@ export default async function MenuPage({
       </div>
 
       {/* category tabs — wraps onto multiple rows instead of scrolling, so nothing hides off-screen */}
-      <div className="sticky top-[85px] z-40 -mx-5 mb-10 flex flex-wrap justify-center gap-2 border-b border-white/6 bg-bg/90 px-5 py-3 backdrop-blur-lg sm:-mx-8 sm:px-8 lg:-mx-14 lg:px-14">
+      <div className="sticky top-[var(--nav-height)] z-40 -mx-5 mb-10 flex flex-wrap justify-center gap-2.5 border-b border-white/6 bg-bg px-5 py-4 sm:-mx-8 sm:px-8 lg:-mx-14 lg:px-14">
         {menu.map((category) => {
           const active = category.slug === activeSlug;
           return (
@@ -35,12 +35,11 @@ export default async function MenuPage({
               key={category.id}
               href={`/menu?category=${category.slug}`}
               scroll={false}
-              className="whitespace-nowrap rounded-full border px-4 py-2 text-[12.5px] font-bold uppercase tracking-wide transition-colors"
-              style={{
-                borderColor: active ? "var(--color-mustard)" : "rgba(255,255,255,0.1)",
-                color: active ? "var(--color-mustard)" : "var(--color-muted)",
-                background: active ? "rgba(242,169,58,0.1)" : "transparent",
-              }}
+              className={`whitespace-nowrap rounded-full border px-5 py-2.5 text-[13px] font-extrabold uppercase tracking-wide transition-all ${
+                active
+                  ? "scale-[1.04] border-transparent bg-mustard text-[#100D0A] shadow-[0_8px_20px_-6px_rgba(242,169,58,0.6)]"
+                  : "border-white/14 bg-white/5 text-text hover:border-mustard/40 hover:bg-white/8 hover:text-mustard"
+              }`}
             >
               {category.label}
             </Link>
@@ -53,41 +52,39 @@ export default async function MenuPage({
           <div className="font-display mb-4 text-[19px] tracking-[1.5px] text-mustard">
             {activeCategory.label.toUpperCase()}
           </div>
-          <div className="mb-12 grid grid-cols-[repeat(auto-fill,minmax(190px,1fr))] gap-5">
+          <div className="mb-12 grid grid-cols-3 gap-2 sm:gap-5 lg:grid-cols-4">
             {activeCategory.items.map((item) => (
               <div
                 key={item.id}
-                className="relative overflow-hidden rounded-2xl border border-white/8 bg-white/3"
+                className="group overflow-hidden rounded-2xl border border-white/8 bg-white/3 transition-[transform,border-color] duration-250 hover:-translate-y-1 hover:border-mustard/35"
               >
-                <Image
-                  src={item.image}
-                  alt={item.name}
-                  width={300}
-                  height={300}
-                  sizes="(max-width: 640px) 50vw, (max-width: 1024px) 33vw, 20vw"
-                  className={`block aspect-square h-auto w-full object-cover ${
-                    item.available ? "" : "opacity-40 grayscale"
-                  }`}
-                />
-                {!item.available && (
-                  <div className="absolute right-2.5 top-2.5 rounded-full bg-[#100D0A]/85 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide text-muted">
-                    Unavailable
+                <div className="overflow-hidden">
+                  <Image
+                    src={item.image}
+                    alt={item.name}
+                    width={300}
+                    height={300}
+                    quality={90}
+                    sizes="(max-width: 640px) 33vw, (max-width: 1024px) 33vw, 20vw"
+                    className={`block aspect-square h-auto w-full object-cover transition-transform duration-300 group-hover:scale-110 ${
+                      item.available ? "" : "opacity-40 grayscale"
+                    }`}
+                  />
+                </div>
+                <div className="p-1.5 sm:p-3">
+                  <div className="min-h-[26px] text-[11px] leading-[1.25] font-bold text-text sm:min-h-[34px] sm:text-[13px]">
+                    {item.name}
                   </div>
-                )}
-                <div className="p-3.5">
-                  <div className="text-[14.5px] font-bold text-text">{item.name}</div>
-                  {item.description && (
-                    <div className="mt-1 text-xs leading-[1.4] text-muted">
-                      {item.description}
-                    </div>
-                  )}
-                  <div className="mt-2 text-[14.5px] font-extrabold text-mustard">
+                  <div className="mt-0.5 text-[11px] font-extrabold text-mustard sm:mt-1 sm:text-[13px]">
                     Rs {item.price}
                   </div>
                   {item.available ? (
-                    <AddToCartButton item={item} className="mt-3 w-full" />
+                    <AddToCartButton
+                      item={item}
+                      className="mt-1.5 w-full px-1 py-1.5 text-[10px] sm:mt-2.5 sm:py-2 sm:text-[12px]"
+                    />
                   ) : (
-                    <div className="mt-3 w-full rounded-[10px] border border-white/8 bg-white/3 px-4 py-2.5 text-center text-[13px] font-bold text-muted">
+                    <div className="mt-1.5 w-full rounded-[10px] border border-white/8 bg-white/3 px-1 py-1.5 text-center text-[10px] font-bold text-muted sm:mt-2.5 sm:py-2 sm:text-[11.5px]">
                       Unavailable
                     </div>
                   )}
