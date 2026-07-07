@@ -23,3 +23,12 @@ export function statusLabel(status: string): string {
 export function isValidStatus(status: string): status is OrderStatus {
   return ALL_STATUSES.some((s) => s.value === status);
 }
+
+/**
+ * Terminal statuses are final: once an order is delivered or cancelled, its
+ * status is locked and can never be changed again — enforced by the PATCH
+ * API (409), with the admin UI showing a locked badge instead of a dropdown.
+ */
+export function isTerminalStatus(status: string): boolean {
+  return status === "delivered" || status === "cancelled";
+}
