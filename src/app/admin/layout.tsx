@@ -3,7 +3,9 @@ import AdminHeader from "@/components/AdminHeader";
 import { ADMIN_COOKIE, verifyAdminSessionToken } from "@/lib/admin-auth";
 
 export const metadata = {
-  title: "Admin — DCF",
+  // absolute: opt out of the root layout's "%s — Delite Chicken Food" title
+  // template so the admin tab title stays exactly as it was.
+  title: { absolute: "Admin — DCF" },
   robots: { index: false, follow: false },
 };
 

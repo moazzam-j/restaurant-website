@@ -2,7 +2,10 @@ import Link from "next/link";
 import SocialLinks from "@/components/SocialLinks";
 
 export const metadata = {
-  title: "Contact — DCF",
+  title: "Contact & Location",
+  description:
+    "Find Delite Chicken Food at Shop # 09 E, Gardinia Market, Bahria Town Lahore. Call 0300-8025248 or chat on WhatsApp. Open daily 4:00 PM – 2:00 AM.",
+  alternates: { canonical: "/contact" },
 };
 
 export default function ContactPage() {

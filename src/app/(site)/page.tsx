@@ -3,6 +3,13 @@ import Image from "next/image";
 import { getFeatured } from "@/lib/menu-data";
 import AddToCartButton from "@/components/AddToCartButton";
 
+// Title and description come from the root layout defaults; the homepage only
+// needs its canonical URL (www/non-www and any tracking-param variants all
+// consolidate to this one).
+export const metadata = {
+  alternates: { canonical: "/" },
+};
+
 export default async function HomePage() {
   const featured = await getFeatured();
 

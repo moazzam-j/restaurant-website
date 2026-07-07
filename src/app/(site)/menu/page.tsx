@@ -4,7 +4,12 @@ import { getMenu } from "@/lib/menu-data";
 import AddToCartButton from "@/components/AddToCartButton";
 
 export const metadata = {
-  title: "Menu — DCF",
+  title: "Menu",
+  description:
+    "Browse the full Delite Chicken Food menu — fried chicken, burgers, wings, fries, shakes and more. Order online for delivery across Bahria Town Lahore or pickup.",
+  // The ?category= variants all show the same catalog, so they canonicalize
+  // to the bare /menu URL instead of competing with each other in search.
+  alternates: { canonical: "/menu" },
 };
 
 export default async function MenuPage({
