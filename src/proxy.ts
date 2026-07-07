@@ -17,17 +17,32 @@ export async function proxy(req: NextRequest) {
   if (!isAdminPage && !isProtectedApi) return NextResponse.next();
 
   const token = req.cookies.get(ADMIN_COOKIE)?.value;
-  const authed = await verifyAdminSessionToken(token);
+  const role = await verifyAdminSessionToken(token);
 
-  if (authed) return NextResponse.next();
-
-  if (isAdminPage) {
-    const loginUrl = new URL("/admin/login", req.url);
-    loginUrl.searchParams.set("from", pathname);
-    return NextResponse.redirect(loginUrl);
+  if (!role) {
+    if (isAdminPage) {
+      const loginUrl = new URL("/admin/login", req.url);
+      loginUrl.searchParams.set("from", pathname);
+      return NextResponse.redirect(loginUrl);
+    }
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  // Staff are limited to order management: the /admin orders dashboard plus
+  // the orders API. Everything else admin-side — menu editing, photo upload,
+  // and any admin page/endpoint added in the future — is manager-only by
+  // default. Enforced here at the edge so hitting a URL or API directly is
+  // blocked outright, not merely hidden from the navigation.
+  if (role === "staff") {
+    if (isAdminPage && pathname !== "/admin") {
+      return NextResponse.redirect(new URL("/admin", req.url));
+    }
+    if (isAdminApi) {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
+  }
+
+  return NextResponse.next();
 }
 
 export const config = {

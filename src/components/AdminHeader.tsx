@@ -2,13 +2,16 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
+import type { AdminRole } from "@/lib/admin-auth";
 
+// managerOnly tabs are hidden from staff here AND blocked by src/proxy.ts —
+// hiding is cosmetic, the proxy is the real gate.
 const tabs = [
-  { href: "/admin", label: "Orders" },
-  { href: "/admin/menu", label: "Menu" },
+  { href: "/admin", label: "Orders", managerOnly: false },
+  { href: "/admin/menu", label: "Menu", managerOnly: true },
 ];
 
-export default function AdminHeader() {
+export default function AdminHeader({ role }: { role: AdminRole | null }) {
   const pathname = usePathname();
   const router = useRouter();
   const isLogin = pathname === "/admin/login";
@@ -27,7 +30,9 @@ export default function AdminHeader() {
         </Link>
         {!isLogin && (
           <div className="flex items-center gap-4">
-            {tabs.map((tab) => {
+            {tabs
+              .filter((tab) => !tab.managerOnly || role === "manager")
+              .map((tab) => {
               const active = pathname === tab.href;
               return (
                 <Link

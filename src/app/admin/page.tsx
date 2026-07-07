@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { ALL_STATUSES, statusLabel, type OrderStatus } from "@/lib/order-status";
+import { ALL_STATUSES, isTerminalStatus, statusLabel, type OrderStatus } from "@/lib/order-status";
 import StatusSelect from "@/components/StatusSelect";
 import Dropdown from "@/components/Dropdown";
 
@@ -169,11 +169,30 @@ export default function AdminOrdersPage() {
                 {o.notes && <div className="mt-0.5 text-xs italic text-muted">“{o.notes}”</div>}
               </div>
 
-              <StatusSelect
-                value={o.status}
-                disabled={updatingId === o.id}
-                onChange={(newStatus) => updateStatus(o.id, newStatus)}
-              />
+              {isTerminalStatus(o.status) ? (
+                // Delivered/cancelled are final — the API rejects any further
+                // change (409), so show a locked badge instead of a dropdown.
+                <div
+                  title="Final status — can't be changed"
+                  className="print:hidden flex items-center gap-1.5 whitespace-nowrap rounded-full px-3 py-2 text-xs font-bold"
+                  style={{
+                    background:
+                      o.status === "cancelled" ? "rgba(239,68,68,0.12)" : "rgba(111,168,90,0.14)",
+                    color: o.status === "cancelled" ? "#f87171" : "var(--color-green-soft)",
+                  }}
+                >
+                  <svg viewBox="0 0 24 24" width="12" height="12" fill="currentColor" aria-hidden="true">
+                    <path d="M12 2a5 5 0 0 0-5 5v3H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8a2 2 0 0 0-2-2h-1V7a5 5 0 0 0-5-5Zm-3 8V7a3 3 0 1 1 6 0v3H9Z" />
+                  </svg>
+                  {statusLabel(o.status)}
+                </div>
+              ) : (
+                <StatusSelect
+                  value={o.status}
+                  disabled={updatingId === o.id}
+                  onChange={(newStatus) => updateStatus(o.id, newStatus)}
+                />
+              )}
               <span className="hidden print:inline text-xs font-bold text-text">
                 {statusLabel(o.status)}
               </span>

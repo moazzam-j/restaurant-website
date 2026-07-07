@@ -1,14 +1,23 @@
+import { cookies } from "next/headers";
 import AdminHeader from "@/components/AdminHeader";
+import { ADMIN_COOKIE, verifyAdminSessionToken } from "@/lib/admin-auth";
 
 export const metadata = {
   title: "Admin — DCF",
   robots: { index: false, follow: false },
 };
 
-export default function AdminLayout({ children }: { children: React.ReactNode }) {
+export default async function AdminLayout({ children }: { children: React.ReactNode }) {
+  // The session cookie is httpOnly (client JS can't read it), so the role is
+  // resolved here on the server and handed to the header as a plain prop.
+  // This only drives what the nav SHOWS — actual access control lives in
+  // src/proxy.ts, which guards the routes and APIs themselves.
+  const token = (await cookies()).get(ADMIN_COOKIE)?.value;
+  const role = await verifyAdminSessionToken(token);
+
   return (
     <>
-      <AdminHeader />
+      <AdminHeader role={role} />
       {children}
     </>
   );
